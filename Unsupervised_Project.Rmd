@@ -1,0 +1,412 @@
+---
+title: "Unsupervised_Project"
+author: "Michela Mazzaglia"
+output: html_document
+date: "2023-07-03"
+---
+
+```{r}
+library(ggplot2)
+library(tree)
+library(ISLR)
+library(gbm)
+```
+
+```{r}
+library(JOUSBoost)
+library(rpart)
+library(nnet)
+library(tidyverse)
+library(dplyr)
+library(corrplot)
+library(ggthemes)
+library(mapsf)
+library(viridis)
+library(readr)
+library(caret)
+library(tibble)
+library(MASS)
+library(class)
+library(maps)
+library(cluster)
+library(gower)
+library(factoextra)
+library(VIM)
+library(psych)
+library(FactoMineR)
+library(proxy)
+library(klaR)
+library(readxl)
+```
+
+# IMPORT DATA
+
+```{r}
+my_ds1 <- read_xlsx("C:/Users/miche/OneDrive/Desktop/My_DS.xlsx")
+head(my_ds1)
+```
+
+## DATA CLEANING
+
+Data must be cleaned from NA values and organised (first and last column deletion)
+
+```{r}
+my_ds <- my_ds1[-c(1, nrow(my_ds1)), ]
+summary(my_ds)
+anyNA(my_ds)
+my_ds <- na.omit(my_ds)
+head(my_ds)
+
+my_ds <- my_ds %>% dplyr::select(-c()) 
+cn <- c("Country", "Life_expectancy","Share_of_perceived_health","Air_pollution","Self_perceived_health","Depressive_symptoms","Life_satisfaction","Employment_rates","Trust","Crime_levels", "Social_support")
+colnames(my_ds) <- cn
+rm(cn)
+```
+
+# EXPLANATORY DATA ANALYSIS
+
+```{r}
+hist(my_ds$Self_perceived_health, freq =F, col = "light green", main = "Self perceived health",
+     xlab = "level of health")
+```
+
+```{r}
+ggplot(my_ds, aes(x = Self_perceived_health, y = Air_pollution, fill = Country)) +
+  geom_bar(stat = "identity", width = 0.8) +
+  labs(x = " Self perceived health", y = "Air pollution") +
+  theme_minimal()
+```
+
+```{r}
+ggplot(
+  data = my_ds,
+  mapping = aes(x = Self_perceived_health, y = Depressive_symptoms, label = Country, color = Country)) +
+  geom_point() +
+  geom_text(size = 3, nudge_x = 0.20, nudge_y = 0.20, check_overlap = TRUE) +
+  theme(text = element_text(size = 8))
+```
+
+Life satisfaction levels per country
+
+```{r}
+my_ds$Life_satisfaction_levels <- cut(my_ds$Life_satisfaction, c(5, 6, 7, 8), labels = c("Low","Medium","High") )
+
+ggplot(my_ds,aes(x= Life_satisfaction_levels, fill= Country))+
+  geom_bar(col="black")+
+ # facet_wrap(.~Country)+
+  #stat_count(aes(y=..count.., label=..count..),geom="text", col="black")+
+  labs(x="Life satisfaction level", y = "Count", title="Life satisfaction distribution", fill= "Country")+
+  theme_minimal()+
+  theme(plot.title=element_text(face="bold"))
+```
+
+```{r}
+data_num <- select_if(my_ds,is.numeric) 
+data_num_box <-data_num %>% gather(variable,values,1:9)
+
+ggplot(data_num_box)+
+  geom_boxplot(aes(x=variable,y=values), fill = "salmon") + 
+  facet_wrap(~variable,ncol=3,scales="free") + 
+  theme(strip.text.x = element_blank(),
+        text = element_text(size=12))
+```
+
+```{r}
+summary(boxplot.stats(my_ds$Share_of_perceived_health)) 
+```
+
+```{r}
+summary(boxplot.stats(my_ds$Life_expectancy))
+```
+
+```{r}
+summary(boxplot.stats(my_ds$Life_satisfaction))
+```
+
+```{r}
+summary(boxplot.stats(my_ds$Air_pollution))
+```
+
+```{r}
+summary(boxplot.stats(my_ds$Employment_rates))
+```
+
+```{r}
+summary(boxplot.stats(my_ds$Depressive_symptoms))
+```
+
+```{r}
+summary(boxplot.stats(my_ds$Self_perceived_health))
+```
+
+```{r}
+summary(boxplot.stats(my_ds$Social_support))
+```
+
+```{r}
+summary(boxplot.stats(my_ds$Trust))
+```
+
+```{r}
+rm(data_num_box)
+```
+
+I consider to not remove the outliers present in Self perceived health since we want to conduct the analysis on it
+
+## Correlation
+
+```{r}
+my_ds <- my_ds %>% dplyr::select(-Life_satisfaction_levels, -Country)
+my_ds$Crime_levels <- as.numeric(my_ds$Crime_levels)
+correlation <- cor(my_ds)
+corrplot(correlation,type = "upper", tl.col = "black",tl.srt = 45)
+```
+
+```{r}
+rm(correlation)
+```
+
+# PCA
+
+We do some data visualization with the Principal Component Analysis We delete the response variable since we are conducting a clustering analysis
+
+```{r}
+roll <- my_ds1[-c(1, nrow(my_ds1)), ]
+summary(roll)
+anyNA(roll)
+roll <- na.omit(roll)
+head(roll)
+
+roll <- roll %>% dplyr::select(-c()) 
+cn <- c("Country", "Life_expectancy","Share_of_perceived_health","Air_pollution","Self_perceived_health","Depressive_symptoms","Life_satisfaction","Employment_rates","Trust","Crime_levels", "Social_support")
+colnames(roll) <- cn
+rm(cn)
+roll <- roll %>% dplyr::select(-Self_perceived_health)
+```
+
+Number of rows and columns
+
+```{r}
+nrow(roll)
+ncol(roll)
+```
+
+mean and std
+
+```{r}
+roll <- roll %>%
+  mutate(Life_expectancy = as.numeric(Life_expectancy),
+         Share_of_perceived_health = as.numeric(Share_of_perceived_health),
+         Air_pollution = as.numeric(Air_pollution),
+         Depressive_symptoms = as.numeric(Depressive_symptoms),
+         Life_satisfaction = as.numeric(Life_satisfaction),
+         Employment_rates = as.numeric(Employment_rates),
+         Trust = as.numeric(Trust),
+         Crime_levels = as.numeric(Crime_levels),
+         Social_support = as.numeric(Social_support))
+my_ds <- my_ds %>% dplyr::select(-Self_perceived_health)
+means <- colMeans(my_ds)
+means
+std <- apply(my_ds, 2, sd)
+std
+```
+
+We use the code of the book
+
+```{r}
+pr.out=prcomp(my_ds, scale=TRUE)
+names(pr.out)
+```
+
+```{r}
+pr.out$center
+```
+
+```{r}
+pr.out$scale
+```
+
+```{r}
+pr.out$rotation
+```
+
+The dataset transformed into a new set of variables (principal components)that capture the maximum amount of variation in the data The first component explains the most variability and so on...
+
+```{r}
+dim(pr.out$x)
+```
+
+```{r}
+biplot(pr.out, scale=0)
+```
+
+```{r}
+pr.out$rotation=-pr.out$rotation
+pr.out$x=-pr.out$x
+biplot(pr.out, scale=0)
+```
+
+```{r}
+pr.out$sdev
+```
+
+```{r}
+pr.var=pr.out$sdev^2
+pr.var
+```
+
+```{r}
+pve=pr.var/sum(pr.var)
+pve
+```
+
+```{r}
+plot(pve, xlab="Principal Component", ylab="Proportion of Variance Explained", ylim=c(0,1),type='b')
+```
+
+```{r}
+plot(cumsum(pve), xlab="Principal Component", ylab="Cumulative Proportion of Variance Explained", ylim=c(0,1),type='b')
+```
+
+```{r}
+plot(1:length(pr.out$sdev), pr.out$sdev^2,
+     type = "b", pch = 19, frame = FALSE,
+     xlab = "Principal Component", ylab = "Variance",
+     main = "Scree Plot")
+```
+
+which components are the most relevant ones?
+
+```{r}
+rho <- cor(my_ds)
+round(rho,3)
+```
+
+```{r}
+eigen(rho)
+```
+
+```{r}
+screeplot(princomp(my_ds, cor=T))
+```
+
+# CLUSTERING
+
+We use roll with the categorical variable Country
+
+We need to standardise the distances to better ensure the predictability since the data have different scale/unit
+
+```{r}
+my_ds <- scale(my_ds)
+```
+
+```{r}
+dist_matrix <- dist(my_ds, method = "euclidean")
+```
+
+```{r}
+hc <- hclust(dist_matrix, method = "ward.D2")
+```
+
+```{r}
+plot(hc, main = "Hierarchical Clustering Dendrogram", labels = roll$Country)
+```
+
+We could use other distances calculating methods
+
+```{r}
+manhattan_dist <- dist(my_ds, method = "manhattan")
+manhattan_dist
+```
+
+```{r}
+hc1 <- hclust(manhattan_dist, method = "ward.D2")
+plot(hc1, main = "Hierarchical Clustering Dendrogram", labels = roll$Country)
+
+```
+
+```{r}
+min_dist <- dist(my_ds, method="minkowski", p=2)
+hc2 <- hclust(min_dist, method = "ward.D2")
+plot(hc2, main = "Hierarchical Clustering Dendrogram", labels = roll$Country)
+
+```
+
+```{r}
+# we calculate the rankings
+grad_eu<-order(dist_matrix)
+# let's define a new object of type dist equal to the distance matrix
+order_eu<- dist_matrix
+# now we're going to fill it with the rankings
+for(i in 1:length(grad_eu)) {
+    order_eu[grad_eu[i]]<-i
+}
+order_eu
+```
+
+```{r}
+clu <- cutree(hc, k =5)
+clu
+```
+
+```{r}
+table(clu)
+```
+
+```{r}
+ str(as.dendrogram(hc))
+```
+
+```{r}
+h4 <- hclust(dist_matrix, method="average")
+plot(h4, main = "Hierarchical Clustering Dendrogram", labels = roll$Country)
+```
+
+Similarities indices to see which countries are most similar to each other
+
+```{r}
+# Gower's index
+simil(my_ds, method="Gower")
+```
+
+```{r}
+my_ds_sub <-my_ds[,-c(1,2,3,4,5,6)]
+rownames(my_ds_sub)<-roll$Country
+```
+
+```{r}
+simil(my_ds_sub, method="jaccard")
+# it considers only 5 variables
+```
+
+```{r}
+plot(hc, main="Complete linkage", labels = roll$Country)
+rect.hclust(hc, 5)
+h2cluster <- cutree(hc, k=5)
+h2cluster
+
+```
+
+
+How many clusters?
+
+```{r}
+my_ds <-my_ds[,-ncol(my_ds)]
+col<-colnames(my_ds)
+
+wss <- (nrow(my_ds))*sum(apply(my_ds,2,var))
+for (i in 2:10) wss[i] <- sum(kmeans(my_ds,
+                                     centers=i)$withinss)
+plot(1:10, wss, type="b", xlab="Number of cluster", ylab="Within Deviance")
+```
+
+```{r}
+fit <- kmeans(my_ds, 10) # 4 cluster solution
+aggregate(my_ds,by=list(fit$cluster),FUN=mean)
+```
+
+```{r}
+my_ds <- data.frame(my_ds, fit$cluster)
+table(h2cluster,fit$cluster)
+
+```

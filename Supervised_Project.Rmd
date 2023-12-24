@@ -1,0 +1,593 @@
+---
+title: "Supervised_Project"
+author: "Michela Mazzaglia"
+output: html_document
+date: "2023-07-04"
+---
+
+```{r}
+library(readxl)
+library(ggplot2)
+library(plyr)
+library(dplyr)
+library(ggthemes)
+library(tidyr)
+library(tidyverse)
+library(rmarkdown)
+library(data.table)
+library(ggpubr)
+library(tidymodels)
+library(rpart.plot)
+library(ranger)
+library(stats)
+library(leaps)
+library(stargazer)
+library(patchwork)
+library(scales)
+library(partykit)
+library(corrplot)
+library(MASS)
+library(DataExplorer)
+library(car)
+library(olsrr) 
+library(caret)
+library(broom)
+library(gtools)
+library(psych)
+library(glmnet)
+library(ISLR)
+library(rpart)
+library(tree)
+library(rpart.plot)
+library(lmtest)
+library(yardstick)
+library(performance)
+library(caTools)
+library(randomForest)
+library("Hmisc")
+library(plotly)
+library(party)
+library(gplots)
+library(Metrics)
+```
+
+```{r}
+ds1 = read.csv("C:/Users/miche/OneDrive/Desktop/Sleep_Efficiency.csv")
+str(ds1)
+head(ds1)
+```
+
+# Data cleaning and pre processing
+
+#### Selection of variables of interest
+
+```{r}
+ds <- select(ds1, -ID, -Bedtime, -Wakeup.time, -Light.sleep.percentage, -REM.sleep.percentage)
+head(ds)
+str(ds)
+summary(ds)
+```
+
+Presence of NA values: remove them
+
+```{r}
+# any NA
+glimpse(ds)
+anyNA(ds) # there are NA
+#remove NA values from the dataset
+ds <- na.omit(ds)
+```
+
+```{r}
+#Converting categorical data to numerical
+ds <- ds %>% 
+  mutate(Gender = ifelse(Gender == "Female", "1", "0"),
+         Smoking.status = ifelse(Smoking.status == "Yes", "1", "0"))
+ds <- ds %>% mutate(Gender = as.numeric(Gender),
+                    Smoking.status = as.numeric(Smoking.status))
+str(ds)
+```
+
+# Data analysis
+
+```{r}
+# 1. describe the variable Sleep.efficiency
+# check normality
+summary(ds$Sleep.efficiency)
+qqnorm(ds$Sleep.efficiency)
+shapiro.test(ds$Sleep.efficiency)
+ggqqplot(ds$Sleep.efficiency)
+# p-value really low, not distributed as a Normal
+ggdensity(ds, x = "Sleep.efficiency", fill = "lightgray", title = "Sleep.efficiency") +
+  stat_overlay_normal_density(color = "red", linetype = "dashed") # skewed data
+# The variable sleep.efficiency is not normal distributed, we reject the null hypothesis of the shapiro wilks test.
+```
+
+```{r}
+# we try using the logarithm
+ds$loga_c=log(ds$Sleep.efficiency)
+qqnorm(ds$loga_c)
+shapiro.test(ds$loga_c)
+ggqqplot(ds$loga_c)
+ggdensity(ds, x = "loga_c", fill = "lightgray", title = "loga_c") +
+  stat_overlay_normal_density(color = "red", linetype = "dashed")
+```
+
+```{r}
+a_cons <- ds %>% relocate(Sleep.efficiency)
+```
+
+Checking outliers
+
+```{r}
+boxplot(a_cons, main = "Box Plot of Dataset")
+```
+
+There are some outliers: most of them in Deep sleep percentage. It is possible to spot something also in Caffeine consumption.
+
+### Does sleep efficiency change a lot if the individual is a smoker or not?
+
+```{r}
+a_cons$Smoking.status <- factor(a_cons$Smoking.status,
+                          levels = c(1,0),
+                          labels = c("yes", "no"))
+boxplot(Sleep.efficiency~Smoking.status, data=a_cons, col = c("blue", "red"))
+plotmeans(Sleep.efficiency~Smoking.status, data=a_cons)
+ddply(a_cons,~Smoking.status,summarise,mean=mean(Sleep.efficiency),sd=sd(Sleep.efficiency),n=length(Sleep.efficiency))
+t.test(Sleep.efficiency~Smoking.status, alternative='two.sided', conf.level=.95, var.equal=FALSE, data=a_cons)
+# Sleep.efficiency differ for Smoking.status
+# the t-statistics is -5.38 which falls outside the confidence interval, the p-value is really small 
+```
+
+### Does sleep efficiency differ significantly for the level of exercise frequency?
+
+```{r}
+max(a_cons$Exercise.frequency)
+min(a_cons$Exercise.frequency)
+a_cons$Exercise.frequency <- factor(a_cons$Exercise.frequency,
+                       levels = c(1,2,3,4,5,6),
+                       labels = c("No activity", "Low activity", "Low-Medium","Medium activity", "Medium-High", "High activity"))
+colors <- c("lightblue", "lightgreen", "lightpink", "lightyellow", "purple", "orange", "white")
+Boxplot(Sleep.efficiency~Exercise.frequency, id=TRUE, data=a_cons, col = colors)
+plotmeans(Sleep.efficiency~Exercise.frequency, data=a_cons)
+ddply(a_cons,~Exercise.frequency,summarise,mean=mean(Sleep.efficiency),sd=sd(Sleep.efficiency),n=length(Sleep.efficiency))
+summary(aov(Sleep.efficiency~Exercise.frequency, data=a_cons))
+# Sleep efficiency differs for the exercise frequency: the F statistic is 5.17, larger than the critical value
+# Medium high is the exercise frequency that takes a wider range of values and differ from the others
+```
+
+### Does the efficiency of sleep depend linearly on the sleep duration?
+
+```{r}
+plot(Sleep.efficiency~Sleep.duration, col="darkgreen", pch=19, cex=1,data=a_cons)
+mod<-lm(Sleep.efficiency~Sleep.duration, data=a_cons)
+abline(mod, col="red", lwd=3)
+summary(mod)
+```
+
+Looking at the p-value, it is not smaller than 0.05 which means that it is not significantly different and does not suggest a linear relationship between the two variables, also the R-squared is really low.
+
+# Data visualization
+
+```{r}
+# sleep efficiency by age
+ggplot(a_cons,aes(x= Age , fill = Sleep.efficiency))+
+  geom_histogram(bins = 15, col = "lightpink", fill = "lightpink")+
+  labs(x = "Age", y = "Sleep Efficiency", title = "Sleep Efficiency by Age")+
+  theme_grey()+
+  theme(plot.title = element_text(hjust = 0.5))
+# There is a significant drop in sleep efficiency in individuals between 30 and 40 years old
+# it is instead really high in most individuals before turning 30
+# this may be due to childbirth, parenting responsibilities and other factors
+```
+
+```{r}
+# sleep efficiency by exercise frequency
+ggplot(ds1,aes(x=Sleep.efficiency, y = Exercise.frequency))+
+  geom_bar(colour="pink", fill="pink", stat="identity")+
+  labs(x = "Sleep Efficiency", y = "Exercise Frequency", title = "Sleep Efficiency by Exercise Frequency")+
+  theme_light()+
+  theme(plot.title = element_text(hjust = 0.5))
+# higher frequency in individuals with higher sleep efficiency
+```
+
+```{r}
+boxplot(Deep.sleep.percentage~Awakenings, data=a_cons,
+        col=("purple"),
+        main="Deep Sleep Percentage by Number of Awakenings", xlab="Number of Awakenings",ylab = "Deep Sleep Percentage")
+# the box plot shows that those that have less awakenings are also the ones with higher deep sleep percentage. The circles are outliers.
+# caffeine consumption and alcohol consumption
+boxplot(Sleep.efficiency~Caffeine.consumption, data=a_cons,
+        col=("orange"),
+        main="Sleep efficiency by Caffeine consumption", xlab="Caffeine consumption",ylab = "Sleep efficiency")
+ggplot(a_cons,aes(x= Caffeine.consumption , group = Sleep.efficiency))+
+  geom_histogram(bins = 10, col = "orange", fill = "orange")+
+  labs(x = "Caffeine consumption", y = "Sleep Efficiency", title = "Sleep Efficiency by Caffeine consumption")+
+  theme()+
+  theme(plot.title = element_text(hjust = 0.5))
+ggplot(a_cons,aes(x= Alcohol.consumption , group = Sleep.efficiency))+
+  geom_histogram(bins = 15, col = "hotpink", fill ="hotpink")+
+  labs(x = "Alcohol consumption", y = "Sleep Efficiency", title = "Sleep Efficiency by Alcohol consumption")+
+  theme_grey()+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+## Which variables are most correlated?
+
+Correlation map
+
+```{r}
+a_cons <- ds %>% relocate(Sleep.efficiency)
+# display the correlation map
+cormap <- round(cor(a_cons), 2)
+head(cormap)
+```
+
+```{r}
+# display the mixed correlation
+mix_cormap <- melt(cormap)
+head(mix_cormap)
+```
+
+```{r}
+sleep <- a_cons %>% select(Sleep.efficiency, Age, Gender, Sleep.duration, Alcohol.consumption, Smoking.status, Awakenings)
+res <-cor(sleep) 
+round(res, 2)
+```
+
+```{r}
+# show the p-value
+symnum(res, abbr.colnames = FALSE)
+rcorr(as.matrix(sleep))
+```
+
+```{r}
+
+fact_var <- c('loga_c')
+
+correlation <- cor(a_cons %>% dplyr::select(-all_of(fact_var)))
+col<- colorRampPalette(c("blue", "white", "red"))
+corrplot(correlation, type = "upper",
+         tl.col = "black", tl.srt = 45)
+```
+
+# Regression analysis
+
+```{r}
+sleep1 <- a_cons %>% select(Sleep.efficiency, Age, Gender, Sleep.duration, Caffeine.consumption, Alcohol.consumption, Smoking.status, Awakenings, Exercise.frequency)
+sleep1 <- na.omit(sleep1)
+```
+
+```{r}
+# partition of the data
+set.seed(30)
+split_train_test <- createDataPartition(y = sleep1$Sleep.efficiency, p=0.8, list = F)
+train <- sleep1[split_train_test,]
+test <-  sleep1[-split_train_test,]
+dim(test)
+```
+
+```{r}
+dim(train)
+```
+
+```{r}
+full.model <- lm(log(Sleep.efficiency) ~ ., data = train)
+summary(full.model)
+```
+
+```{r}
+# check multicollinearity
+vif(full.model) # variance inflation factors 
+# we removed the aliases alias(full.model)
+sqrt(vif(full.model)) > 2
+# all variables result FALSE which means there is not too high correlation with sleep efficiency
+```
+
+```{r}
+plot(full.model)
+```
+
+```{r}
+summary(full.model$residuals)
+shapiro.test(full.model$residuals)
+# check for heteroscedasticity -> there is significant evidence of heteroscedasticity
+bptest(full.model)
+```
+
+```{r}
+# we use studentized residuals to check for outliers
+ols_plot_resid_stud(full.model)
+# there are outliers
+ols_plot_resid_stand(full.model)
+ols_plot_resid_stud_fit(full.model)
+ols_plot_resid_lev(full.model)
+ols_plot_cooksd_bar(full.model)
+ols_plot_cooksd_chart(full.model)
+# Cook's distance
+par(mfrow=c(1,2))
+par(mar = c(2, 2, 2, 2)) 
+plot(full.model, 4)
+plot(full.model, 5)
+# we clearly can see a lot of outliers
+```
+
+```{r}
+# check for autocorrelation of the residuals
+dwtest(full.model)
+# no autocorrelation between the residuals
+```
+
+## Stepwise selection
+
+```{r}
+# 1. stepwise
+step.model <- stepAIC(full.model, direction = "both", 
+                      trace = FALSE)
+summary(step.model)
+par(mfrow=c(3,3))
+plot(step.model)
+# there is a little pattern in the residuals suggesting that the quadratic term improves the fit to the data
+# we now check the model
+vif(step.model)
+sqrt(vif(step.model)) > 2
+```
+
+```{r}
+# we define the residuals distribution
+summary(step.model$residuals)
+shapiro.test(step.model$residuals)
+# check for heteroscedasticity -> there is significant evidence of heteroscedasticity
+bptest(step.model)
+# W is a value close to 1 indicates a good fit to the normal distribution
+```
+
+```{r}
+# we use studentized residuals to check for outliers
+ols_plot_resid_stud(step.model)
+```
+
+```{r}
+# best subset selection
+regfit.full=regsubsets(sleep1$Sleep.efficiency~.,data= sleep1, nvmax=13)
+reg.summary = summary(regfit.full)
+names(reg.summary)
+par(mar = c(5, 4, 4, 2) + 0.1)
+plot(reg.summary$cp,xlab="Number of Variables",ylab="Cp")
+which.min(reg.summary$cp)
+points(5,reg.summary$cp[5],pch=20,col="red")
+plot(regfit.full,scale="Cp")
+```
+
+## Ridge and Lasso
+
+```{r}
+x=model.matrix(Sleep.efficiency~.-1,data=train) 
+y=train$Sleep.efficiency
+# first we will fit a ridge regression model
+fit.ridge=glmnet(x,y,alpha=0)
+plot(fit.ridge,xvar="lambda",label=TRUE)
+cv.ridge=cv.glmnet(x,y,alpha=0)
+plot(cv.ridge)
+# log lambda of -2 corresponds to approx 0.01, more of a constrained model
+```
+
+```{r}
+# selected regressors with this lambda
+coef_r <- coef(cv.ridge)
+coef_r
+```
+
+```{r}
+coef_namesr <- rownames(coef_r)[-1]  # Exclude intercept
+coef_formular <- paste(coef_namesr, collapse = " + ")
+fmlar <- as.formula(paste("y ~", coef_formular))
+ridge <- lm(fmlar, data=train)
+check_model(ridge)
+check_normality(ridge)
+check_heteroscedasticity(ridge)
+check_autocorrelation(ridge)
+check_collinearity(ridge)
+coeftest(ridge, vcov. = vcovHC, type='HC1')
+```
+
+```{r}
+# we fit a lasso model
+fit.lasso=glmnet(x,y, alpha = 1)
+plot(fit.lasso,xvar="lambda",label=TRUE)
+cv.lasso=cv.glmnet(x,y)
+plot(cv.lasso)
+coef_l <- coef(cv.lasso)
+# same results of the ridge and the stepwise
+```
+
+```{r}
+coef_names <- rownames(coef_l)[-1]  # Exclude intercept
+coef_formula <- paste(coef_names, collapse = " + ")
+fmla <- as.formula(paste("y ~", coef_formula))
+lasso <- lm(fmla, data=train)
+check_model(lasso)
+check_normality(lasso)
+check_heteroscedasticity(lasso)
+check_autocorrelation(lasso)
+check_collinearity(lasso)
+coeftest(lasso, vcov. = vcovHC, type='HC1')
+```
+
+### Evaluation of the performance
+
+```{r}
+## evalaute performance using cross validation
+optimal_lambda_lasso <- fit.lasso$lambda.min
+fit.lasso_per =glmnet(x,y, alpha = 1,lambda = optimal_lambda_lasso)
+optimal_lambda_ridge <- fit.ridge$lambda.min
+fit.ridge_per=glmnet(x,y,alpha=0, lambda = optimal_lambda_ridge)
+lasso_pred <- predict(fit.lasso_per, newx = x)
+lasso_rmse <- sqrt(mean((y - lasso_pred)^2))
+ridge_pred <- predict(fit.ridge_per, newx = x)
+ridge_rmse <- sqrt(mean((y - ridge_pred)^2))
+cat("Lasso RMSE:", lasso_rmse, "\n")
+cat("Ridge RMSE:", ridge_rmse, "\n")
+```
+
+```{r}
+ols_model <- lm(y ~ ., data = train)
+ols_pred <- predict(ols_model, newdata = test)
+#ols_pred
+ols_rmse <- sqrt(mean((y - ols_pred)^2))
+ols_rmse
+#rmse(train$Sleep.efficiency, ols_pred )
+```
+
+```{r}
+step_model = stepAIC(lm(y ~ ., data = train), direction = "both")
+step_pred <- predict(step_model, newdata = test)
+step_rmse <- sqrt(mean((y - step_pred)^2))
+step_rmse
+```
+
+```{r}
+model_comparison <- data.frame(Model = c("OLS", "Stepwise", "Lasso", "Ridge"),
+                               RMSE = c(ols_rmse, step_rmse, lasso_rmse, ridge_rmse))
+                            
+model_comparison
+```
+
+# Robust regression
+
+Designed to handle data with outliers, using Bisquare weights
+
+```{r}
+robust1 <- rlm(fmla,data=train, psi = psi.bisquare)
+summary(robust1)
+```
+
+```{r}
+weights <- data.frame(resid = robust1$resid, weight = robust1$w)
+weights1 <- weights[order(robust1$w),]
+weights1[1:10,]
+# cases with large residuals tend to be down weighted
+```
+
+```{r}
+# comparing all the models
+rose_rosse <- list(sqrt(diag(vcovHC(full.model, type = "HC1"))),
+                   sqrt(diag(vcovHC(step.model, type = "HC1"))),
+                   sqrt(diag(vcovHC(lasso, type = "HC1"))),
+                   sqrt(diag(vcovHC(robust1, type = "HC1")))
+)
+stargazer::stargazer(full.model, step.model, lasso, robust1,
+                     type = 'text',
+                     digits = 2,
+                     dep.var.labels.include = F,
+                     omit.table.layout = "n",
+                     header = F, 
+                     column.labels = c('Baseline OLS', 'Stepwise', 'Lasso', "Robust"),
+                     se = rose_rosse)
+```
+
+# Decision Tree
+
+we want to predict the efficiency of sleep using Decision Tree algorithm
+
+```{r}
+anyNA(train$Sleep.efficiency) # no NA values we can proceed
+clean_train <- na.omit(train$Exercise.frequency)
+```
+
+```{r}
+tree_model <- rpart(Sleep.efficiency ~ ., data = train)
+
+predictions <- predict(tree_model, newdata = test)
+
+rmse_value <- caret::RMSE(predictions, test$Sleep.efficiency)
+rsq_value <- caret::R2(predictions, test$Sleep.efficiency)
+metrics <- c(rmse_value, rsq_value)
+
+model_performance <- test %>%
+  mutate(predictions = predictions) %>%
+  metrics(truth = Sleep.efficiency, estimate = predictions)
+model_performance
+```
+
+```{r}
+rpart.plot(tree_model)
+```
+
+# Random Forest
+
+Tree Based models can better perceive non linear effects and interactions between variables, we build a number of decision trees on bootstrapped training samples
+
+```{r}
+rf <- randomForest(Sleep.efficiency ~ ., data=train, proximity=TRUE)
+print(rf)
+plot(rf)
+```
+
+```{r}
+data_gr <- train %>%
+  mutate(set="train") %>%
+  bind_rows(test %>% mutate(set="test"))
+data_gr$fit <- predict(rf, data_gr)
+ggp <- ggplot(data = data_gr, mapping = aes(x=fit, y=Sleep.efficiency)) +
+  geom_point(aes(colour=set), alpha=0.6) +
+  geom_abline(slope=1, intercept = 0) +
+  geom_smooth(method = "lm", se = FALSE, aes(colour=set), alpha=0.6)
+print(ggp)
+```
+
+```{r}
+rf.data = randomForest(Sleep.efficiency ~ ., data= train, ntree=50, mtry=3, importance=TRUE)
+varImpPlot(rf.data)
+pred <- predict(rf.data, train[,-1])
+plot(train[,1],pred)
+# the plot gives the importance of different variables in the rf model
+cor(train[,1],pred)
+```
+
+```{r}
+rg.data <- ranger(Sleep.efficiency ~ ., data = train, mtry=2) 
+pred.data <- predict(rg.data, data = test) 
+(mean(test$Sleep.efficiency-pred.data$prediction))^2
+rg.data <- ranger(Sleep.efficiency ~ ., data = sleep1, importance = "impurity")
+rg.data$variable.importance
+barplot(sort(rg.data$variable.importance),las=2)
+# table to compare also tree and random forest
+# computing rmse for tree and random forest
+```
+
+```{r}
+predictions_tree <- predict(tree_model, test)
+rmse <- sqrt(mean((predictions_tree - test$Sleep.efficiency)^2))
+ss_total <- sum((test$Sleep.efficiency - mean(test$Sleep.efficiency))^2)
+ss_residual <- sum((test$Sleep.efficiency - predictions_tree)^2)
+rsquared <- 1 - (ss_residual / ss_total)
+rmse_tree <- print(rmse)
+r_sq <- print(rsquared)
+```
+
+```{r}
+predictions_rf <- predict(rf, test)
+rmse_rf <- sqrt(mean((predictions_rf - test$Sleep.efficiency)^2))
+ss_total_rf <- sum((test$Sleep.efficiency - mean(test$Sleep.efficiency))^2)
+ss_residual_rf <- sum((test$Sleep.efficiency - predictions_rf)^2)
+rsquared_rf <- 1 - (ss_residual_rf / ss_total_rf)
+
+```
+
+```{r}
+r_squared_lasso <- summary(lasso)$r.squared
+r_squared_ridge <- summary(ridge)$r.squared
+r_squared_step <- summary(step.model)$r.squared
+r_squared_ols <- summary(full.model)$r.squared
+```
+
+To conclude, we compare all the models implemented
+
+```{r}
+model_comparison_final <- data.frame(Model = c("OLS", "Stepwise", "Lasso", "Ridge", "Tree", "RandomForest"),
+                                     RMSE = c(ols_rmse, step_rmse, lasso_rmse, ridge_rmse, rmse_tree, rmse_rf),
+                                     R2 = c(r_squared_ols, r_squared_step, r_squared_lasso, r_squared_ridge, rsquared, rsquared_rf))
+model_comparison_final
+
+```
